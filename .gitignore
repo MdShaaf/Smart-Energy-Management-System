@@ -1,0 +1,13 @@
+models/
+Data/
+.venv/
+logs/
+*.joblib
+*.csv
+*.pdf
+*.word
+*.html
+*.txt
+*.pkl
+*/faiss
+*.png
