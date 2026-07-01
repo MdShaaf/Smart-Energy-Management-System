@@ -29,7 +29,7 @@ import joblib
 import warnings
 warnings.filterwarnings("ignore")
 import warnings
-
+import yaml
 warnings.filterwarnings(
     "ignore",
     message=".*artifact_path.*"
@@ -88,6 +88,7 @@ def preprocess_data(df):
     df.dropna(inplace=True)
     df['Rain_Category'] = df['precipitation'].apply(lambda x: "Rain" if x > 0 else "No Rain")
     df['time'] = pd.to_datetime(df['time'])
+    df.sort_values(by='time',inplace=True)
     df['month'] = df['time'].dt.month
     df['day'] = df['time'].dt.day
     df['Season'] = df['month'].apply(lambda x: "1" if x in [12, 1, 2] else ("2" if x in [3, 4, 5] else ("3" if x in [6, 7, 8] else "4")))
@@ -121,10 +122,9 @@ def data_splitting(df):
 
     # Scale using only training data
     scaler = StandardScaler()
-
     X_train = scaler.fit_transform(X_train)
     X_test = scaler.transform(X_test)
-
+    joblib.dump(scaler,models_dir/"Standard_scalar_rainfall.pkl")
     # Apply SMOTE only on training data
     smote = SMOTE(random_state=42)
 
@@ -141,15 +141,20 @@ def data_splitting(df):
         f"Applied SMOTE oversampling. Training samples after SMOTE: {len(y_train)}"
     )
 
-    return X_train, X_test, y_train, y_test, scaler, label_encoder
+    return X_train, X_test, y_train, y_test, scaler, label_encoder,X
 models_dir=Path("models")
 os.makedirs(models_dir,exist_ok=True)
 
 
 data = read_data(file_path)
 data = preprocess_data(data)
-X_train, X_test, y_train, y_test, scaler, label_encoder = data_splitting(data)
+X_train, X_test, y_train, y_test, scaler, label_encoder,X = data_splitting(data)
 
+
+yaml_path = project_dir / "src" / "config.yaml"
+
+with open(yaml_path, "r") as file:
+    config = yaml.safe_load(file)
 
 mlflow.set_tracking_uri(
     f"sqlite:///{project_dir}/mlflow.db"
@@ -163,14 +168,15 @@ print("Experiment exists:", experiment is not None)
 mlflow.set_experiment("Rain Prediction")
 with mlflow.start_run(run_name="Logistic Regression Model") as run:
     try:
-        logistic_model_path = models_dir/"logistic_model.pkl"
+        logistic_model_path = models_dir/"rain_prediction_logistic_model.pkl"
         if logistic_model_path.exists():
             logger.info("Logistic_Model exists, loading the model")
             logistic_model =joblib.load(logistic_model_path)
             mlflow.set_tag("model_status", "loaded")
         else:
             logger.info("Training Logistic Regression model")
-            logistic_model = LogisticRegression(class_weight='balanced', random_state=42, max_iter=1000)
+            logistc_params = config["logistic_rain_prediction_parameters"]
+            logistic_model = LogisticRegression(**logistc_params)
             logistic_model.fit(X_train, y_train)
             joblib.dump(logistic_model,logistic_model_path)
             logger.info(f"Model Saved to {Path(models_dir)}")
@@ -178,6 +184,8 @@ with mlflow.start_run(run_name="Logistic Regression Model") as run:
 
         ### Starting the Prediction
         ###------------------------
+        logger.info(f"The features columns are {X_train.shape}")
+        logger.info(f"The target column is {y_train.shape}")
         y_pred = logistic_model.predict(X_test)
         report = classification_report(y_test, y_pred, target_names=label_encoder.classes_)
 
@@ -187,9 +195,7 @@ with mlflow.start_run(run_name="Logistic Regression Model") as run:
 
         report_df.to_csv(data_path/"rain_classification_report_logistic_regression.csv", index=False)
 
-        mlflow.log_param("model", "LogisticRegression")
-        mlflow.log_param("class_weight", "balanced")
-        mlflow.log_param("max_iter", 1000)
+        mlflow.log_params(config["logistic_rain_prediction_parameters"])
         accuracy = accuracy_score(y_test, y_pred)
         precision = precision_score(y_test, y_pred, average='weighted')
         recall = recall_score(y_test, y_pred, average='weighted')
@@ -211,18 +217,19 @@ with mlflow.start_run(run_name="Logistic Regression Model") as run:
 
 with mlflow.start_run(run_name="Random Forest Model") as run:
     try:
-        rf_model_path = models_dir/"rf_model.pkl"
+        rf_model_path = models_dir/"rf_rain_prediction_model.pkl"
         if rf_model_path.exists():
             logger.info(f"Loading the existing Random Forest Model from {Path(rf_model_path)}")
             rf_model = joblib.load(rf_model_path)
             mlflow.set_tag("model status","Loaded")
         else:
             logger.info("Model Doesn't exists Training Random Forest Model")
-            params_rf = {"n_estimators": 496,"max_depth": 26,"min_samples_split": 4,"min_samples_leaf": 1,"max_features": "sqrt","random_state": 42,"n_jobs": -1}
+            params_rf = config['rf_rain_prediction_parameters']
             rf_model = RandomForestClassifier(**params_rf)
             rf_model.fit(X_train, y_train)
             joblib.dump(rf_model,rf_model_path)
             mlflow.set_tag("Model Status","Trained")
+        logger.info(f"The input shapes in random forest are {X.columns}")
         y_pred_rf = rf_model.predict(X_test)
         report_rf = classification_report(y_test, y_pred_rf, target_names=label_encoder.classes_)
         report_rf_df =pd.DataFrame(classification_report(y_test, y_pred_rf, target_names=label_encoder.classes_, output_dict=True)).transpose().round(2)
@@ -230,9 +237,20 @@ with mlflow.start_run(run_name="Random Forest Model") as run:
         report_rf_df.rename(columns={"index": "Class"},inplace=True)
         report_rf_df.to_csv(data_path/"rain_classification_report_random_forest.csv", index=False)
 
+        ###Logging feature impotance
+        # x_train_df = pd.to_datetime(X_train)
+        # feature_indices = [f"Feature {i}" for i in range(X_train.shape[1])]
+        feature_importance_df = pd.DataFrame({
+            "Features": X.columns,
+            "Importance": rf_model.feature_importances_
+        }).sort_values(by="Importance", ascending=False)
+        feature_importance_df_path = data_path/"feature_importance.csv"
+        feature_importance_df.to_csv(feature_importance_df_path,index=False)
+        mlflow.log_artifact(feature_importance_df_path)
+
         mlflow.set_tag("tuning_method", "Optuna")
-        params_rf = {"n_estimators": 496,"max_depth": 26,"min_samples_split": 4,"min_samples_leaf": 1,"max_features": "sqrt","random_state": 42,"n_jobs": -1}
-        mlflow.log_params(params_rf)
+        # params_rf = {"n_estimators": 496,"max_depth": 26,"min_samples_split": 4,"min_samples_leaf": 1,"max_features": "sqrt","random_state": 42,"n_jobs": -1}
+        mlflow.log_params(config['rf_rain_prediction_parameters'])
         accuracy_rf = accuracy_score(y_test, y_pred_rf)
         precision_rf = precision_score(y_test, y_pred_rf, average='weighted')
         recall_rf = recall_score(y_test, y_pred_rf, average='weighted')
@@ -249,7 +267,7 @@ with mlflow.start_run(run_name="Random Forest Model") as run:
 
 with mlflow.start_run(run_name="XGBoost Model") as run:
     try:
-        xgb_model_path = models_dir/"xgb_model"
+        xgb_model_path = models_dir/"xgb_rain_prediction_model.pkl"
         
         if xgb_model_path.exists():
             logger.info(f"Trained Model Exists, Loading the model from{Path(xgb_model_path)}")
@@ -257,7 +275,7 @@ with mlflow.start_run(run_name="XGBoost Model") as run:
             mlflow.set_tag("Model Status","Loaded")
         else:
             logger.info("Model Doesn't Exists Training XGBoost Model")
-            params_xgb = {"n_estimators":757,"max_depth":10,"learning_rate":0.24,"subsample":0.9,"colsample_bytree":0.8,"gamma":0.3,"min_child_weight":1}
+            params_xgb = config['xgb_rain_prediction_parameters']
             xgb_model= XGBClassifier(**params_xgb)
             xgb_model.fit(X_train, y_train)
             joblib.dump(xgb_model,xgb_model_path)
@@ -269,8 +287,8 @@ with mlflow.start_run(run_name="XGBoost Model") as run:
         report_xgb_df.rename(columns={"index": "Class"},inplace=True)
         report_xgb_df.to_csv(data_path/"rain_classification_report_xgb.csv", index=False)
         mlflow.set_tag("tuning_method", "Optuna")
-        params_xgb = {"n_estimators":757,"max_depth":10,"learning_rate":0.24,"subsample":0.9,"colsample_bytree":0.8,"gamma":0.3,"min_child_weight":1}
-        mlflow.log_params(params_xgb)
+        # params_xgb = {"n_estimators":757,"max_depth":10,"learning_rate":0.24,"subsample":0.9,"colsample_bytree":0.8,"gamma":0.3,"min_child_weight":1}
+        mlflow.log_params(config['xgb_rain_prediction_parameters'])
         accuracy_xgb = accuracy_score(y_test, y_pred_xgb)
         precision_xgb = precision_score(y_test, y_pred_xgb, average='weighted')
         recall_xgb = recall_score(y_test, y_pred_xgb, average='weighted')
@@ -350,6 +368,7 @@ with mlflow.start_run(run_name="Model Comparison") as run:  #### ROC CURVE COMPA
         new_comparison_df = pd.concat([metrics_log, metrics_rf, metrics_xgb], axis=0)
         new_comparison_df.to_csv("model_comparison.csv", index=True)
         mlflow.log_artifact("model_comparison.csv")
+        mlflow.log_artifact(feature_importance_df_path)
         logger.info("Model comparison and logging completed successfully")
     except Exception as e:
         logger.error(f"Error during model comparison and logging: {e}")

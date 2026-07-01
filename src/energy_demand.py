@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 from sklearn.preprocessing import StandardScaler, LabelEncoder
+import yaml
 import os
 import logging
 import mlflow
@@ -97,7 +98,7 @@ y_test = bundled_data['y_test']
 features = bundled_data['features']
 target=bundled_data['target']
 
-
+logger.info(f"The input features are {X_train.columns}")
 
 mlflow.set_tracking_uri(
     f"sqlite:///{project_dir}/mlflow.db"
@@ -105,6 +106,12 @@ mlflow.set_tracking_uri(
 mlflow.set_experiment("Energy Demand")
 model_dir = Path("models").resolve()
 model_dir.mkdir(exist_ok=True)
+
+###YAML Setup
+yaml_path = project_dir / "src" / "config.yaml"
+
+with open(yaml_path, "r") as file:
+    config = yaml.safe_load(file)
 
 with mlflow.start_run(run_name="Random Forest") as run:
 
@@ -116,7 +123,8 @@ with mlflow.start_run(run_name="Random Forest") as run:
             mlflow.set_tag("model_action","Loaded Model")
         else:
             logger.info("Trained rf_model_energy_demand doesn't exists, tarining the model the model")
-            Best_Parameters={'n_estimators': 500, 'max_depth': 5, 'min_samples_split': 0.9, 'min_samples_leaf': 7,'random_state':100} ## From Optuna
+            Best_Parameters = config["rf_demand_prediction_parameters"]
+            # Best_Parameters={'n_estimators': 500, 'max_depth': 5, 'min_samples_split': 0.9, 'min_samples_leaf': 7,'random_state':100} ## From Optuna
             rf_model_energy_demand = RandomForestRegressor(**Best_Parameters)
             rf_model_energy_demand.fit(X_train,y_train)
             joblib.dump(rf_model_energy_demand,rf_model_energy_demand_path)
@@ -150,8 +158,9 @@ with mlflow.start_run(run_name="XGBossting") as run:
             xgb_demand_forecast_model = joblib.load(xgb_demand_forecast_model_path)
             mlflow.set_tag("model_action","Loaded Model")
         else:
-            logger.info("Model Doesn't exists, tarining the model")
-            xgb_params ={'learning_rate': 0.01, 'max_depth': 3, 'n_estimators': 800, 'subsample': 0.8,'random_state':100} ### From Gridsearch CV
+            logger.info("XGB Model Doesn't exists, training the model")
+            # xgb_params ={'learning_rate': 0.01, 'max_depth': 3, 'n_estimators': 800, 'subsample': 0.8,'random_state':100} ### From Gridsearch CV
+            xgb_params = config['xgb_demand_prediction_params']
             xgb_demand_forecast_model=XGBRegressor(**xgb_params)
             xgb_demand_forecast_model.fit(X_train,y_train)
             joblib.dump(xgb_demand_forecast_model,xgb_demand_forecast_model_path)
