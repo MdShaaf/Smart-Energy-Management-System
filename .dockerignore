@@ -1,0 +1,12 @@
+.venv
+__pycache__
+.ipynb_checkpoints
+*.pyc
+*.pyo
+*.pyd
+.git
+.gitignore
+.vscode
+Experiments
+notebooks
+README.md

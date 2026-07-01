@@ -110,14 +110,14 @@ Metrics used:
 
 ## Rain Prediction Results
 
-| Model | Class | Precision | Recall | F1 Score |
+| Model                 | Class         |Precision      | Recall        | F1 Score |
 |---|---|---|---|---|
-| Logistic Regression | No Rain | 0.99 | 0.78 | 0.87 |
-| Logistic Regression | Rain | 0.20 | 0.83 | 0.32 |
-| Random Forest | No Rain | 0.99 | 0.91 | 0.95 |
-| Random Forest | Rain | 0.39 | 0.89 | 0.55 |
-| XGBoost | No Rain | 1.00 | 0.71 | 0.83 |
-| XGBoost | Rain | 0.18 | 0.96 | 0.30 |
+| Logistic Regression   |No Rain        | 0.99          | 0.78          | 0.87 |
+| Logistic Regression   | Rain          | 0.20          | 0.83          | 0.32 |
+| Random Forest         | No Rain       | 0.99          | 0.91          | 0.95 |
+| Random Forest         | Rain          | 0.39          | 0.89          | 0.55 |
+| XGBoost               | No Rain       | 1.00          | 0.71          | 0.83 |
+| XGBoost               | Rain          | 0.18          | 0.96          | 0.30 |
 
 
 ## Selected Model
